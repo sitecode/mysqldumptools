@@ -1,0 +1,322 @@
+#!/bin/bash
+
+# author: sitecode
+# License: MIT 
+
+#usage
+#gunzip -c dump.sql.gz | ./parseDump.sh --skipTables=1 --SkipViews=1 | mysql
+
+#what about:
+#set global innodb_flush_log_at_trx_commit = 2
+
+#TODO create table write to file option
+#TODO create view write to file option
+#TODO option to not drop keys on insert
+#TODO option to be interactive pausing for input at each table/view
+#TODO double check before dropping a key that it exists
+	#https://stackoverflow.com/questions/2480148/how-can-i-employ-if-exists-for-creating-or-dropping-an-index-in-mysql
+#TODO create head and foot includes for specific table by name
+#TODO identify dump by header
+	#-- phpMyAdmin SQL Dump
+	#-- MySQL dump 10.13  Distrib 5.7.34, for Linux (x86_64)
+#TODO what about triggers
+
+#TODO use circular buffer to detect multi-line headers
+#awk 'NR>n{print A[NR%n]} {A[NR%n]=$0}' n=3 file
+
+#reference
+#https://www.howtogeek.com/562941/how-to-use-the-awk-command-on-linux/
+#https://linuxhandbook.com/awk-command-tutorial/
+#https://www.geekpills.com/automation/awk/awk-if-statement-examples
+#https://www.gnu.org/software/gawk/manual/html_node/Delete.html
+#https://www.linuxjournal.com/article/2156
+#https://www.math.utah.edu/docs/info/gawk_7.html
+
+
+################################
+# AWK scripts                  #
+################################
+read -d '' awkScript << 'EOF'
+BEGIN {
+	#defaults
+    p=1 #print 
+    #skipTables = 0
+	if (length(skipTablesInList)) {
+		gsub(/,/, "|", skipTablesInList)
+		gsub(/[*]/, ".*", skipTablesInList)
+		skipTablesInList = "^(" skipTablesInList ")$"
+	}
+	#skipTablesUntilTable = 0
+	skipTablesUntilTableFound = 1
+	if (skipTablesUntilTable) {
+		skipTablesUntilTableFound = 0
+	}
+    #skipTableCreates = 0
+    #skipTableInserts = 0
+	if (length(skipTableInsertsInList)) {
+		#gsub(/,|[*]/, "|", skipTableInsertsInList)
+		gsub(/,/, "|", skipTableInsertsInList)
+		gsub(/[*]/, ".*", skipTableInsertsInList)
+		skipTableInsertsInList = "^(" skipTableInsertsInList ")$"
+	}
+    if (skipTableInserts || skipTables) { skipTableInsertsInList = 0 }
+    #skipViews = 0
+	#onlyTablesInList = ""
+	if (length(onlyTablesInList)) {
+		gsub(/,/, "|", onlyTablesInList)
+		gsub(/[*]/, ".*", onlyTablesInList)
+		onlyTablesInList = "^(" onlyTablesInList ")$"
+		skipTables = 1
+		skipViews = 1
+	}
+	useDone = 0
+
+	#prompt to wait for connect to db? it isn't necessary, the pipe waits until it's connected
+	#print "connected to mysql?" > "/dev/stderr"
+	#getline start < "/dev/tty"
+
+	system("[ -f head ] && cat head"); #file included before dump
+} 
+
+#start use database
+!useDone && /^-- Current Database: `/ {
+	p = 0
+}
+!tn && /^USE `/ {
+	next
+}
+
+#start table
+#start table create
+/^-- Table structure for table/ {
+	useDone = 1
+    p = 1; 
+    tn = $6; #includes the ``
+	gsub(/`/, "", tn) #remove the surrounding `
+	keysadd = ""
+	keysdrop = ""
+	if (!skipTablesUntilTableFound) { 
+		p = 0 
+		if ($6 == skipTablesUntilTable) {
+			skipTablesUntilTableFound = 1
+			p = 1   
+		}
+	}
+    if (skipTableCreates) { p = 0 } #TODO skip to next row if p=0, set tn = false
+	if (p && skipTablesInList && (tn ~ skipTablesInList)) { p = 0 }
+    if (skipTables) { p = 0 }
+	if (!p && onlyTablesInList && (tn ~ onlyTablesInList)) { p = 1 }
+
+	if (p) {
+		print "start table " tn > "/dev/stderr"; 
+		system("[ -f create_table_head  ] && cat create_table_head")
+	}
+} 
+#gather all the keys (including fulltext) that arent unique or primary from the create table statement
+p && tn && ($1 == "KEY" || ($1 == "FULLTEXT" && $2 == "KEY")) { 
+	keysadd = keysadd " ADD " $0 #add in order scanned, so commas will line up
+
+	if (length(keysdrop)) {
+		keysdrop = keysdrop ","
+	}
+	if ($1 == "KEY") {
+		keysdrop = keysdrop " DROP INDEX " $2
+	} else {
+		keysdrop = keysdrop " DROP INDEX " $3
+	}
+}
+#end table create
+#start table insert
+/^-- Dumping data for table/ {
+	#end table create
+	if (p) {
+		system("[ -f create_table_foot  ] && cat create_table_foot");
+	}
+
+	#start table insert
+    p = 1; 
+	if (!skipTablesUntilTableFound) { p = 0 }
+	if (p && skipTableInsertsInList && (tn ~ skipTableInsertsInList)) { p = 0 }
+    if (skipTableInserts) { p = 0 }
+	if (p && skipTablesInList && (tn ~ skipTablesInList)) { p = 0 }
+    if (skipTables) { p = 0 }
+	if (!p && onlyTablesInList && (tn ~ onlyTablesInList)) { 
+		p = 1 
+		#still skip insert if requested
+		if (p && skipTableInsertsInList && (tn ~ skipTableInsertsInList)) { p = 0 }
+	}
+
+	if (p) {
+		print "start insert for " tn > "/dev/stderr"; 
+		if (length(keysdrop)) { 
+			gsub(/,\s*$/, "", keysdrop) #remove any possible trailing comma
+			print "NOTE: ALTER TABLE `" tn "` " keysdrop ";" > "/dev/stderr"
+		}
+		if (length(keysadd)) {
+			gsub(/,\s*$/, "", keysadd) #remove any possible trailing comma
+			print "NOTE: ALTER TABLE `" tn "` " keysadd ";" > "/dev/stderr"
+		}
+	}
+} 
+#OLD start table insert
+#tn && $0 ~ ("^\\/\\*\\!40000 ALTER TABLE `" tn "` DISABLE KEYS") { # \\*\\/\\;
+tn && $0 ~ "^[/][*][!]40000 ALTER TABLE `" tn "` DISABLE KEYS" { # */;
+#tn && $0 ~ ("^LOCK TABLES `" tn "` WRITE;") { # */;
+	if (p) {
+        #make inserts more efficient
+		#remove all keys for table 
+		if (length(keysdrop)) { 
+			gsub(/,\s*$/, "", keysdrop) #remove any possible trailing comma
+			print "ALTER TABLE `" tn "` " keysdrop ";"
+		}
+        #TODO maybe only needs to be added at very beginning or just the first table insert
+        print "SET autocommit=0;"
+
+		system("[ -f insert_table_head ] && cat insert_table_head");
+	}
+}
+
+#end table insert
+#end table, assuming insert is included in the dump
+tn && $0 ~ ("^[/][*][!]40000 ALTER TABLE `" tn "` ENABLE KEYS") { # \\*\\/\\;
+	if (p) {
+		print "end insert for " tn > "/dev/stderr"; 
+		system("[ -f insert_table_foot ] && cat insert_table_foot");
+
+        #needed if autocommit is off
+        print "COMMIT;"
+		#add back all removed keys for table
+		if (length(keysadd)) {
+			gsub(/,\s*$/, "", keysadd) #remove any possible trailing comma
+			print "ALTER TABLE `" tn "` " keysadd ";"
+		}
+	}
+
+    tn = 0;
+}
+
+#start view
+#start view temp, temporary view tables created before final views actually created in case view is based on a view
+!tn && /^-- Temporary table structure for view/ {
+	useDone = 1
+    p = 1 
+    if (skipViews) { p = 0 }
+    vtn = $7
+	gsub(/`/, "", vtn) #remove the surrounding `
+	if (p) {
+		print "start temp view table " vtn > "/dev/stderr"; 
+	}
+}
+#start view final
+!tn && /^-- Final view structure for view/ {
+	useDone = 1
+    p = 1 
+    if (skipViews) { p = 0 }
+    vfn = $7
+	gsub(/`/, "", vfn) #remove the surrounding `
+	if (p) {
+		print "start view final " vfn > "/dev/stderr"; 
+		system("[ -f create_view_head ] && cat create_view_head");
+	}
+}
+#skip definer line for final view create
+vfn && /^[/][*][!]50013 DEFINER\=\`/ { #/ and * are special cases, could only escape them inside char set
+	next #don't print this line, while not changing var p
+}
+
+#end view final
+#this could change depending on dump version, be sure up to date!
+vfn && /^[/][*][!]50001 SET collation_connection.*\= @saved_col_connection [*][/]\;/ {
+	vfn = 0
+	if (!p) { #don't print current line, and turn on printing (i.e end of file, get last section)
+		p = 1
+		next
+	}
+}
+
+#start function?
+#functions aren't included in these dumps apparently
+
+p #if p then print current line
+
+END {
+	system("[ -f foot ] && cat foot"); #file included after dump
+}
+EOF
+
+#get arguments
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --skipTables=*)
+      skipTables="${1#*=}"
+      ;;
+    --skipTablesInList=*)
+      skipTablesInList="${1#*=}"
+      ;;
+    --skipTablesUntilTable=*)
+      skipTablesUntilTable="${1#*=}"
+      ;;
+    --skipTableCreates=*)
+      skipTableCreates="${1#*=}"
+      ;;
+    --skipTableInserts=*)
+      skipTableInserts="${1#*=}"
+      ;;
+    --skipTableInsertsInList=*)
+      skipTableInsertsInList="${1#*=}"
+      ;;
+    --skipViews=*)
+      skipViews="${1#*=}"
+      ;;
+    --onlyTablesInList=*)
+      onlyTablesInList="${1#*=}"
+      ;;
+
+    --help*)
+      echo "Filter mysqldump sql before piping it into the database. By default it removes all USE statements so the data can be imported to any database. By default when inserting table data it removes index keys and then readds them after inserting is done for the table. By default it turns off autocommit on inserts and appends a COMMIT after each table inserts finish."
+      echo ""
+	  echo "OPTIONS:"
+	  echo "  --skipTables=1                    Skip ALL table creates and inserts"
+	  echo "  --skipTablesInList=[tables]       Only skip table creates and inserts for table names in list. Comma separated list no spaces. Use a * for table name to start with that string."
+	  echo "  --skipTablesUntilTable=[table]    Skip ALL table creates and inserts UNTIL [Table] is found. Good for recovering from error and running again for rest of file."
+	  echo "  --skipTableCreates=1              Skip ALL table creates"
+	  echo "  --skipTableInserts=1              Skip ALL table inserts"
+	  echo "  --skipTableInsertsInList=[tables] Only skip table inserts for table names in list. Comma separated list no spaces. Use a * for table name to start with that string."
+	  echo "  --skipViews=1                     Skip ALL views"
+	  echo ""
+	  echo "  --onlyTablesInList=tabl1,tabl_*   Only tables in list, creates and inserts. Comma separated list no spaces. Use a * for table name to start with that string."
+	  echo ""
+      echo "INCLUDES:"
+      echo "Files in the same directory as this command will be included automatically at the appropriate time."
+      echo "  head              Contents of file will be prepended to the output."
+      echo "  create_table_head Contents of file will be prepended to all table creates."
+      echo "  create_table_foot Contents of file will be appended to all table creates."
+      echo "  insert_table_head Contents of file will be prepended to all table inserts."
+      echo "  insert_table_foot Contents of file will be appended to all table inserts."
+      echo "  create_view_head  Contents of file will be prepended to all view creates."
+      echo "  foot              Contents of file will be appended to the output."
+	  echo ""
+	  echo "USAGE:"
+	  echo "Import everything with speed up sql added in:"
+	  echo "  pv dump.sql.gz | gunzip -c | ./mysqldumpfilter | mysql -u USER -p DB_NAME"
+	  echo "Only import tables that start with table prefix_:"
+	  echo "  pv dump.sql.gz | gunzip -c | ./mysqldumpfilter --onlyTablesInList=prefix_* | mysql -u USER -p DB_NAME"
+	  exit 0
+      ;;
+    --version*)
+      echo "mysqldumpfilter 0.002"
+	  exit 0
+      ;;
+
+    *)
+      printf "***************************\n"
+      printf "* Error: Invalid argument.*\n"
+      printf "***************************\n"
+      exit 1
+  esac
+  shift
+done
+
+vars="-v skipTables=$skipTables -v skipTablesInList=$skipTablesInList -v skipViews=$skipViews -v skipTableCreates=$skipTableCreates -v skipTableInserts=$skipTableInserts -v skipTablesUntilTable=$skipTablesUntilTable -v skipTableInsertsInList=$skipTableInsertsInList -v onlyTablesInList=$onlyTablesInList"
+#echo $vars
+awk $vars "$awkScript"
