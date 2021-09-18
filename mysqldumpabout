@@ -1,0 +1,153 @@
+#!/bin/bash
+
+# author: sitecode
+# License: MIT 
+
+#reference
+#https://gist.github.com/calraith/5c85d17b28e96f49e067f9b054a6fdbb
+
+#TODO
+# add option to turnoff counting inserts
+
+################################
+# AWK scripts                  #
+################################
+read -d '' awkScript << 'EOF'
+BEGIN {
+	#defaults
+	countInserts = 1
+} 
+
+#header info
+!mysqldump && /^-- MySQL/ {
+	gsub(/^-- /, "")
+	mysqldump = $0
+}
+!host && /^-- Host:/ {
+	host = $3
+	database = $5
+}
+!mysqlversion && /^-- Server version/ {
+	mysqlversion = $4
+}
+
+#dump completed date
+!showCompleted && /^-- Dump completed / {
+	#add in missing 0 for hour in time
+    showCompleted = $5 " " (length($6) == 7 ? "0" : "") $6
+}
+
+#start table
+#start table create
+/^-- Table structure for table/ {
+    tn = $6; #includes the ``
+	gsub(/`/, "", tn) #remove the surrounding `
+    showTables[++showTablesIndex] = tn
+} 
+countInserts && /^INSERT INTO/ {
+	showInserts[tn]++
+}
+
+#start view
+#start view temp, temporary view tables created before final views actually created in case view is based on a view
+/^-- Temporary table structure for view/ {
+    vtn = $7
+	gsub(/`/, "", vtn) #remove the surrounding `
+    showViews[++showViewsIndex] = vtn
+}
+
+END {
+	if (text) {
+		#text output
+		print "Database: "database
+		print "Host: "host
+		print "Date completed: "showCompleted
+		print "mysqldump: "mysqldump
+		print "mysqlVersion: "mysqlversion
+        for (i=1;i<=length(showTables);i++) { print "Table " i ": " showTables[i] (countInserts && length(showInserts[showTables[i]]) ? " ("showInserts[showTables[i]]" inserts)" : "") }
+		for (i=1;i<=length(showViews);i++) { print "View " i ": " showViews[i]  }
+	} else {
+		#json output
+		print quote( \
+				quote("database") ":" quote(database) "," \
+				quote("host") ":" quote(host) "," \
+				quote("dateCompleted") ":" quote(showCompleted) "," \
+				quote("mysqldump") ":" quote(mysqldump) "," \
+				quote("mysqlVersion") ":" quote(mysqlversion) "," \
+				quote("tables") ":" quote(join(showTables, ","), "[", "]") "," \
+				quote("inserts") ":" quote(join(showInserts, ",", 1, 1, 1), "{", "}") "," \
+				quote("views") ":" quote(join(showViews, ","), "[", "]") \
+			, "{", "}")
+	}
+}
+
+function join(arr, sep, notByIndex, notWithQuote, withKey, _p, i, ii) {
+	# syntax: join(array, string separator)
+	# returns a string
+
+	if (!notByIndex) {
+		for (i=1; i<=length(arr); i++) { 
+			ii = notWithQuote ? arr[i] : quote(arr[i])
+			_p["result"] = _p["result"] ~ "[[:print:]]" ? _p["result"] sep ii : ii
+		}
+	} else {
+		for (i in arr) {
+			if	(withKey) {
+				ii = notWithQuote ? quote(i) ":" arr[i] : quote(i) ":" quote(arr[i])
+			} else {
+				ii = notWithQuote ? arr[i] : quote(arr[i])
+			}
+			_p["result"] = _p["result"] ~ "[[:print:]]" ? _p["result"] sep ii : ii
+		}
+	}
+	return _p["result"]
+}
+
+function quote(str, left, right) {
+	left = !left ? "\\"" : left
+	right = !right ? "\\"" : right
+	if (left == "\\"") {
+		gsub(/\\\\/, "\\\\", str)
+		gsub(/\\r/, "\\r", str)
+		gsub(/\\n/, "\\n", str)
+		gsub(/\\t/, "\\t", str)
+	}
+	return left str right
+}
+EOF
+
+#get arguments
+while [ $# -gt 0 ]; do
+  case "$1" in
+	--text*)
+	  text=1
+	  ;;
+
+    --help*)
+      echo "Find out about a mysqldump. Mysqldump and mysql versions, database name, the date the dump completed, table and view names and the number of insert statements per table. Default output is in JSON format."
+      echo ""
+	  echo "OPTIONS:"
+      echo "  --text                    		Output in text format (default is JSON)"
+	  echo ""
+	  echo "USAGE:"
+	  echo "Save dump about in json format to file:"
+	  echo "  pv dump.sql.gz | gunzip -c | ./mysqldumpabout > dump.sql.gz.json"
+	  exit 0
+      ;;
+    --version*)
+      echo "mysqldumpabout 0.002"
+	  exit 0
+      ;;
+
+    *)
+      printf "***************************\n"
+      printf "* Error: Invalid argument.*\n"
+      printf "***************************\n"
+      exit 1
+  esac
+  shift
+done
+
+vars="-v text=$text "
+#echo $vars
+awk $vars "$awkScript"
