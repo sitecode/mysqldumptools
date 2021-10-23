@@ -65,7 +65,13 @@ gunzip -c dump.sql.gz | ./mysqldumpfilter --skipTablesUntilTable=next_table | my
 * Save to file `out.sql` just the views in the dump file for later viewing/processing:
 
 ```
-gunzip -c dump.sql.gz | ./mysqldumpfilter --skipTables > out.sql
+gunzip -c dump.sql.gz | ./mysqldumpfilter --skipTables=1 --skipTriggers=1 > out.sql
+```
+
+* Import everything into `DB_NAME` but rewrite all trigger definers as USER@localhost the only existing user in that db:
+
+```
+gunzip -c dump.sql.gz | ./mysqldumpfilter --replaceTriggerDefiner '*' '`USER`@`localhost`' | mysql -u USER -p DB_NAME
 ```
 
 #### Workaround entering MySQL password when using pv

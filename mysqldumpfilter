@@ -70,6 +70,10 @@ BEGIN {
 		skipViews = 1
 	}
 	useDone = 0
+    #inTrigger = 0
+
+    oldDefinersArray[1]=oldDefiners
+    newDefinersArray[1]=newDefiners
 
 	#prompt to wait for connect to db? it isn't necessary, the pipe waits until it's connected
 	#print "connected to mysql?" > "/dev/stderr"
@@ -194,6 +198,27 @@ tn && $0 ~ ("^[/][*][!]40000 ALTER TABLE `" tn "` ENABLE KEYS") { # \\*\\/\\;
 
     tn = 0;
 }
+#start trigger
+!tn && !inTrigger && /^DELIMITER ;;$/ {
+    inTrigger = 1
+    if (skipTriggers) { p = 0 } # won't print this DELIMETER line
+}
+#replace definer if not skipTriggers, example line:
+#*!50003 CREATE*/ /*!50017 DEFINER=`user`@`host`*/ /*!50003 TRIGGER `trigger_name` AFTER INSERT ON `table`
+inTrigger && !skipTriggers && /CREATE/ && /TRIGGER/ && /DEFINER/ {
+    for (i=1;i<=length(oldDefinersArray);i++) {
+        if (oldDefinersArray[i] == "*") { 
+            sub(/DEFINER=.*[*][/]/, "DEFINER="newDefinersArray[i]"*/") #replace old definer with new
+        } else {
+            sub(oldDefinersArray[i], newDefinersArray[i]) #replace old definer with new
+        }
+    }
+}
+#end trigger
+inTrigger && /^DELIMITER ;$/ {
+    inTrigger = 0
+    if (skipTriggers) { p = 1; } # will print this DELIMETER line
+}
 
 #start view
 #start view temp, temporary view tables created before final views actually created in case view is based on a view
@@ -245,6 +270,8 @@ END {
 EOF
 
 #get arguments
+oldDefiners=()
+newDefiners=()
 while [ $# -gt 0 ]; do
   case "$1" in
     --skipTables=*)
@@ -271,6 +298,33 @@ while [ $# -gt 0 ]; do
     --onlyTablesInList=*)
       onlyTablesInList="${1#*=}"
       ;;
+    --skipTriggers=*)
+      skipTriggers="${1#*=}"
+      ;;
+    --replaceTriggerDefiner)
+
+      #get old definer
+      shift
+      if [[ $# -ge 1 ]] ; then
+          if [ "$1" = "*" ]; then
+              oldDefiners+=("*")
+          else
+              oldDefiners+=($1)
+          fi
+      else
+          echo Old definer missing
+          exit 1
+      fi
+
+      #get new definer
+      shift
+      if [[ $# -ge 1 ]] ; then
+          newDefiners+=($1)
+      else
+          echo New definer missing
+          exit 1
+      fi
+      ;;
 
     --help*)
       echo "Filter mysqldump sql before piping it into the database. By default it removes all USE statements so the data can be imported to any database. By default when inserting table data it removes index keys and then readds them after inserting is done for the table. By default it turns off autocommit on inserts and appends a COMMIT after each table inserts finish."
@@ -285,6 +339,8 @@ while [ $# -gt 0 ]; do
 	  echo "  --skipViews=1                     Skip ALL views"
 	  echo ""
 	  echo "  --onlyTablesInList=tabl1,tabl_*   Only tables in list, creates and inserts. Comma separated list no spaces. Use a * for table name to start with that string."
+	  echo "  --skipTriggers=1                  Skip ALL triggers"
+	  echo "  --replaceTriggerDefiner O N       Replace ALL trigger definers from O (old) to N (new). Old can be specified as '*' to replace all definers with the new one."
 	  echo ""
       echo "INCLUDES:"
       echo "Files in the same directory as this command will be included automatically at the appropriate time."
@@ -310,13 +366,14 @@ while [ $# -gt 0 ]; do
 
     *)
       printf "***************************\n"
-      printf "* Error: Invalid argument.*\n"
+      printf "Error: '$1' Invalid argument.\n"
       printf "***************************\n"
       exit 1
   esac
   shift
 done
 
-vars="-v skipTables=$skipTables -v skipTablesInList=$skipTablesInList -v skipViews=$skipViews -v skipTableCreates=$skipTableCreates -v skipTableInserts=$skipTableInserts -v skipTablesUntilTable=$skipTablesUntilTable -v skipTableInsertsInList=$skipTableInsertsInList -v onlyTablesInList=$onlyTablesInList"
+#TODO pass full arrays oldDefiners and newDefiners to awk
+vars="-v skipTables=$skipTables -v skipTablesInList=$skipTablesInList -v skipViews=$skipViews -v skipTableCreates=$skipTableCreates -v skipTableInserts=$skipTableInserts -v skipTablesUntilTable=$skipTablesUntilTable -v skipTableInsertsInList=$skipTableInsertsInList -v onlyTablesInList=$onlyTablesInList -v skipTriggers=$skipTriggers -v oldDefiners=${oldDefiners[0]} -v newDefiners=${newDefiners[0]}"
 #echo $vars
 awk $vars "$awkScript"
