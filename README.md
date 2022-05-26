@@ -76,13 +76,13 @@ gunzip -c dump.sql.gz | ./mysqldumpfilter --replaceTriggerDefiner '*' '`USER`@`l
 
 #### Workaround entering MySQL password when using pv
 
-Use mysql option `--defaults-extra-file` to specify user.cnf file with user/password in it. When using this option do not also specify user with `-u`. 
+Use mysql option `--defaults-extra-file` to specify user.cnf file with user/password in it. When using this option use it as the first argument and do not also specify user with `-u`. 
 
 Create a file named `user.cnf` with permissions `600` (so only your user can read it) and with content:
 
 ```
 [client]
-username=USERNAME
+user=USERNAME
 password=PASSWORD
 ```
 
