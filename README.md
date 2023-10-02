@@ -62,10 +62,10 @@ gunzip -c dump.sql.gz | ./mysqldumpfilter --onlyTablesInList=prefix_* | mysql -u
 gunzip -c dump.sql.gz | ./mysqldumpfilter --skipTablesUntilTable=next_table | mysql -u USER -p DB_NAME
 ```
 
-* Save to file `out.sql` just the views in the dump file for later viewing/processing:
+* Save to file `out.sql` just the views in the dump file for later viewing/processing (--skipTables implies --skipTriggers):
 
 ```
-gunzip -c dump.sql.gz | ./mysqldumpfilter --skipTables=1 --skipTriggers=1 > out.sql
+gunzip -c dump.sql.gz | ./mysqldumpfilter --skipTables=1 > out.sql
 ```
 
 * Import everything into `DB_NAME` but rewrite all trigger definers as USER@localhost the only existing user in that db:

@@ -46,9 +46,9 @@ BEGIN {
 		gsub(/[*]/, ".*", skipTablesInList)
 		skipTablesInList = "^(" skipTablesInList ")$"
 	}
-	#skipTablesUntilTable = 0
+	#skipTablesUntilTable = ""
 	skipTablesUntilTableFound = 1
-	if (skipTablesUntilTable) {
+  if (length(skipTablesUntilTable)) {
 		skipTablesUntilTableFound = 0
 	}
     #skipTableCreates = 0
@@ -101,7 +101,7 @@ BEGIN {
 	keysdrop = ""
 	if (!skipTablesUntilTableFound) { 
 		p = 0 
-		if ($6 == skipTablesUntilTable) {
+		if (tn == skipTablesUntilTable) {
 			skipTablesUntilTableFound = 1
 			p = 1   
 		}
@@ -330,7 +330,7 @@ while [ $# -gt 0 ]; do
       echo "Filter mysqldump sql before piping it into the database. By default it removes all USE statements so the data can be imported to any database. By default when inserting table data it removes index keys and then readds them after inserting is done for the table. By default it turns off autocommit on inserts and appends a COMMIT after each table inserts finish."
       echo ""
 	  echo "OPTIONS:"
-	  echo "  --skipTables=1                    Skip ALL table creates and inserts"
+    echo "  --skipTables=1                    Skip ALL table creates and inserts and triggers (implies --skipTriggers=1)"
 	  echo "  --skipTablesInList=[tables]       Only skip table creates and inserts for table names in list. Comma separated list no spaces. Use a * for table name to start with that string."
 	  echo "  --skipTablesUntilTable=[table]    Skip ALL table creates and inserts UNTIL [Table] is found. Good for recovering from error and running again for rest of file."
 	  echo "  --skipTableCreates=1              Skip ALL table creates"
