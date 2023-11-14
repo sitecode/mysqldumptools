@@ -75,6 +75,9 @@ BEGIN {
     oldDefinersArray[1]=oldDefiners
     newDefinersArray[1]=newDefiners
 
+  #databaseName=""
+  #replaceViewDatabaseReferences=1
+
 	#prompt to wait for connect to db? it isn't necessary, the pipe waits until it's connected
 	#print "connected to mysql?" > "/dev/stderr"
 	#getline start < "/dev/tty"
@@ -82,6 +85,11 @@ BEGIN {
 	system("[ -f head ] && cat head"); #file included before dump
 } 
 
+#get db name
+!databaseName && /^-- Host:/ {
+	databaseName = $5
+  print "found db name " databaseName > "/dev/stderr" 
+}
 #start use database
 !useDone && /^-- Current Database: `/ {
 	p = 0
@@ -248,6 +256,9 @@ inTrigger && /^DELIMITER ;$/ {
 vfn && /^[/][*][!]50013 DEFINER\=\`/ { #/ and * are special cases, could only escape them inside char set
 	next #don't print this line, while not changing var p
 }
+vfn && !replaceViewDatabaseReferences && databaseName {
+  sub("`" databaseName "`.", "") #remove database name from view
+}
 
 #end view final
 #this could change depending on dump version, be sure up to date!
@@ -325,6 +336,9 @@ while [ $# -gt 0 ]; do
           exit 1
       fi
       ;;
+    --replaceViewDatabaseReferences=*)
+      replaceViewDatabaseReferences="${1:-1}"
+      ;;
 
     --help*)
       echo "Filter mysqldump sql before piping it into the database. By default it removes all USE statements so the data can be imported to any database. By default when inserting table data it removes index keys and then readds them after inserting is done for the table. By default it turns off autocommit on inserts and appends a COMMIT after each table inserts finish."
@@ -341,6 +355,7 @@ while [ $# -gt 0 ]; do
 	  echo "  --onlyTablesInList=tabl1,tabl_*   Only tables in list, creates and inserts. Comma separated list no spaces. Use a * for table name to start with that string."
 	  echo "  --skipTriggers=1                  Skip ALL triggers"
 	  echo "  --replaceTriggerDefiner O N       Replace ALL trigger definers from O (old) to N (new). Old can be specified as '*' to replace all definers with the new one."
+	  echo "  --replaceViewDatabaseReferences=0  Don't replace ALL database references in ALL views."
 	  echo ""
       echo "INCLUDES:"
       echo "Files in the same directory as this command will be included automatically at the appropriate time."
@@ -374,6 +389,6 @@ while [ $# -gt 0 ]; do
 done
 
 #TODO pass full arrays oldDefiners and newDefiners to awk
-vars="-v skipTables=$skipTables -v skipTablesInList=$skipTablesInList -v skipViews=$skipViews -v skipTableCreates=$skipTableCreates -v skipTableInserts=$skipTableInserts -v skipTablesUntilTable=$skipTablesUntilTable -v skipTableInsertsInList=$skipTableInsertsInList -v onlyTablesInList=$onlyTablesInList -v skipTriggers=$skipTriggers -v oldDefiners=${oldDefiners[0]} -v newDefiners=${newDefiners[0]}"
+vars="-v skipTables=$skipTables -v skipTablesInList=$skipTablesInList -v skipViews=$skipViews -v skipTableCreates=$skipTableCreates -v skipTableInserts=$skipTableInserts -v skipTablesUntilTable=$skipTablesUntilTable -v skipTableInsertsInList=$skipTableInsertsInList -v onlyTablesInList=$onlyTablesInList -v skipTriggers=$skipTriggers -v oldDefiners=${oldDefiners[0]} -v newDefiners=${newDefiners[0]} -v replaceViewDatabaseReferences=$replaceViewDatabaseReferences"
 #echo $vars
 awk $vars "$awkScript"
