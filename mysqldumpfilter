@@ -87,8 +87,8 @@ BEGIN {
 
 #get db name
 !databaseName && /^-- Host:/ {
-	databaseName = $5
-  print "found db name " databaseName > "/dev/stderr" 
+  databaseName = $5
+  print "found db name " databaseName > "/dev/stderr"
 }
 #start use database
 !useDone && /^-- Current Database: `/ {
@@ -257,7 +257,7 @@ vfn && /^[/][*][!]50013 DEFINER\=\`/ { #/ and * are special cases, could only es
 	next #don't print this line, while not changing var p
 }
 vfn && !replaceViewDatabaseReferences && databaseName {
-  sub("`" databaseName "`.", "") #remove database name from view
+  gsub("`" databaseName "`.", "") #remove database name from view
 }
 
 #end view final
