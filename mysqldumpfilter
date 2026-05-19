@@ -83,6 +83,9 @@ BEGIN {
 	#getline start < "/dev/tty"
 
 	system("[ -f head ] && cat head"); #file included before dump
+	if (autocommitAndChecks==2) { 
+    print "-- autocommitAndChecks=2 head section\\nSET @OLD_AUTOCOMMIT=@@AUTOCOMMIT, AUTOCOMMIT = 0;\\nSET @OLD_UNIQUE_CHECKS=@@UNIQUE_CHECKS, UNIQUE_CHECKS = 0;\\nSET @OLD_FOREIGN_KEY_CHECKS=@@FOREIGN_KEY_CHECKS, FOREIGN_KEY_CHECKS = 0;\\n"
+  }
 } 
 
 #get db name
@@ -181,8 +184,10 @@ tn && $0 ~ "^[/][*][!]40000 ALTER TABLE `" tn "` DISABLE KEYS" { # */;
 			gsub(/,\s*$/, "", keysdrop) #remove any possible trailing comma
 			print "ALTER TABLE `" tn "` " keysdrop ";"
 		}
+    if (autocommitAndChecks==1) { 
         #TODO maybe only needs to be added at very beginning or just the first table insert
         print "SET autocommit=0;"
+    }
 
 		system("[ -f insert_table_head ] && cat insert_table_head");
 	}
@@ -195,8 +200,10 @@ tn && $0 ~ ("^[/][*][!]40000 ALTER TABLE `" tn "` ENABLE KEYS") { # \\*\\/\\;
 		print "end insert for " tn > "/dev/stderr"; 
 		system("[ -f insert_table_foot ] && cat insert_table_foot");
 
+    if (autocommitAndChecks==1) { 
         #needed if autocommit is off
         print "COMMIT;"
+    }
 		#add back all removed keys for table
 		if (length(keysadd)) {
 			gsub(/,\s*$/, "", keysadd) #remove any possible trailing comma
@@ -276,6 +283,9 @@ vfn && /^[/][*][!]50001 SET collation_connection.*\= @saved_col_connection [*][/
 p #if p then print current line
 
 END {
+	if (autocommitAndChecks==2) { 
+    print "-- autocommitAndChecks=2 foot section\\nSET FOREIGN_KEY_CHECKS=@OLD_FOREIGN_KEY_CHECKS;\\nSET UNIQUE_CHECKS=@OLD_UNIQUE_CHECKS;\\nSET AUTOCOMMIT = @OLD_AUTOCOMMIT;\\nCOMMIT;\\n"
+  }
 	system("[ -f foot ] && cat foot"); #file included after dump
 }
 EOF
@@ -305,6 +315,10 @@ while [ $# -gt 0 ]; do
       ;;
     --skipViews=*)
       skipViews="${1#*=}"
+      ;;
+    --autocommitAndChecks=*)
+      autocommitAndChecks="${1#*=}"
+      autocommitAndChecks="${autocommitAndChecks:-1}"
       ;;
     --onlyTablesInList=*)
       onlyTablesInList="${1#*=}"
@@ -337,7 +351,8 @@ while [ $# -gt 0 ]; do
       fi
       ;;
     --replaceViewDatabaseReferences=*)
-      replaceViewDatabaseReferences="${1:-1}"
+      replaceViewDatabaseReferences="${1#*=}"
+      replaceViewDatabaseReferences="${replaceViewDatabaseReferences:-1}"
       ;;
 
     --help*)
@@ -351,11 +366,13 @@ while [ $# -gt 0 ]; do
 	  echo "  --skipTableInserts=1              Skip ALL table inserts"
 	  echo "  --skipTableInsertsInList=[tables] Only skip table inserts for table names in list. Comma separated list no spaces. Use a * for table name to start with that string."
 	  echo "  --skipViews=1                     Skip ALL views"
+    echo "  --autocommitAndChecks=1           (Default) Automatically turn off autocommit right before table first insert, and then COMMIT; after table inserts finish."
+	  echo "  --autocommitAndChecks=2           Automatically include import optimizatios to temporarily turn off autocommit, unique checks and foreign key checks for this import."
 	  echo ""
-	  echo "  --onlyTablesInList=tabl1,tabl_*   Only tables in list, creates and inserts. Comma separated list no spaces. Use a * for table name to start with that string."
+	  echo "  --onlyTablesInList=tabl_1,tabl_*  Only tables in list, creates and inserts. Comma separated list no spaces. Use a * for table name to start with that string."
 	  echo "  --skipTriggers=1                  Skip ALL triggers"
 	  echo "  --replaceTriggerDefiner O N       Replace ALL trigger definers from O (old) to N (new). Old can be specified as '*' to replace all definers with the new one."
-	  echo "  --replaceViewDatabaseReferences=0  Don't replace ALL database references in ALL views."
+	  echo "  --replaceViewDatabaseReferences=0 Don't replace ALL database references in ALL views."
 	  echo ""
       echo "INCLUDES:"
       echo "Files in the same directory as this command will be included automatically at the appropriate time."
@@ -389,6 +406,6 @@ while [ $# -gt 0 ]; do
 done
 
 #TODO pass full arrays oldDefiners and newDefiners to awk
-vars="-v skipTables=$skipTables -v skipTablesInList=$skipTablesInList -v skipViews=$skipViews -v skipTableCreates=$skipTableCreates -v skipTableInserts=$skipTableInserts -v skipTablesUntilTable=$skipTablesUntilTable -v skipTableInsertsInList=$skipTableInsertsInList -v onlyTablesInList=$onlyTablesInList -v skipTriggers=$skipTriggers -v oldDefiners=${oldDefiners[0]} -v newDefiners=${newDefiners[0]} -v replaceViewDatabaseReferences=$replaceViewDatabaseReferences"
+vars="-v skipTables=$skipTables -v skipTablesInList=$skipTablesInList -v skipViews=$skipViews -v autocommitAndChecks=$autocommitAndChecks -v skipTableCreates=$skipTableCreates -v skipTableInserts=$skipTableInserts -v skipTablesUntilTable=$skipTablesUntilTable -v skipTableInsertsInList=$skipTableInsertsInList -v onlyTablesInList=$onlyTablesInList -v skipTriggers=$skipTriggers -v oldDefiners=${oldDefiners[0]} -v newDefiners=${newDefiners[0]} -v replaceViewDatabaseReferences=$replaceViewDatabaseReferences"
 #echo $vars
 awk $vars "$awkScript"
