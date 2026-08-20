@@ -223,7 +223,7 @@ tn && $0 ~ ("^[/][*][!]40000 ALTER TABLE `" tn "` ENABLE KEYS") { # \\*\\/\\;
 inTrigger && !skipTriggers && /CREATE/ && /TRIGGER/ && /DEFINER/ {
     for (i=1;i<=length(oldDefinersArray);i++) {
         if (oldDefinersArray[i] == "*") { 
-            sub(/DEFINER=.*[*][/]/, "DEFINER="newDefinersArray[i]"*/") #replace old definer with new
+            sub(/DEFINER=[^*]*[*][/]/, "DEFINER="newDefinersArray[i]"*/") #replace old definer with new
         } else {
             sub(oldDefinersArray[i], newDefinersArray[i]) #replace old definer with new
         }
